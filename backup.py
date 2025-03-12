@@ -4,17 +4,14 @@ import shutil
 import zipfile
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
-from datetime import datetime
 import threading
-import schedule
-import time
 
 # Global variables
 backup_thread = None
 backup_cancelled = False
 
+# Detect available drives
 def get_available_drives():
-    """Detect available drives on Windows and Linux."""
     drives = []
     if os.name == 'nt':  # Windows
         from string import ascii_uppercase
@@ -24,8 +21,8 @@ def get_available_drives():
         drives = [p.mountpoint for p in partitions]
     return drives
 
+# Zip directory with progress tracking
 def zip_directory(source_dir, zip_path, progress_bar, progress_label):
-    """Compress an entire directory into a ZIP file with a progress bar."""
     global backup_cancelled
     try:
         file_list = []
@@ -35,7 +32,7 @@ def zip_directory(source_dir, zip_path, progress_bar, progress_label):
         
         total_files = len(file_list)
         if total_files == 0:
-            messagebox.showwarning("Warning", "No files found in the selected drive.")
+            messagebox.showwarning("Warning", "No files found for backup.")
             return False
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -57,35 +54,13 @@ def zip_directory(source_dir, zip_path, progress_bar, progress_label):
         messagebox.showerror("Error", f"Failed to create ZIP: {e}")
         return False
 
-def backup_drive(drive, destination_folder, progress_bar, progress_label):
-    """Clone an entire drive and create a ZIP backup."""
-    global backup_cancelled
-    backup_cancelled = False  # Reset cancel flag
-
-    backup_folder = os.path.join(destination_folder, f"Backup_{os.path.basename(drive).strip('/')}_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
-    
-    try:
-        shutil.copytree(drive, backup_folder)
-    except PermissionError:
-        messagebox.showerror("Error", f"Permission Denied: Cannot access {drive}")
-        return
-    except Exception as e:
-        messagebox.showerror("Error", f"Error copying {drive}: {e}")
-        return
-
-    zip_path = backup_folder + ".zip"
-
-    if zip_directory(backup_folder, zip_path, progress_bar, progress_label):
-        shutil.rmtree(backup_folder)
-        messagebox.showinfo("Backup Completed", f"Backup saved as {zip_path}")
-
+# Start backup process
 def start_backup():
-    """Start the backup process in a new thread."""
     global backup_thread
-    selected_drives = [drive for drive, var in checkboxes.items() if var.get()]
-    
-    if not selected_drives:
-        messagebox.showwarning("Warning", "Please select at least one drive to back up.")
+    selected_items = [drive for drive, var in checkboxes.items() if var.get()] + folder_list
+
+    if not selected_items:
+        messagebox.showwarning("Warning", "Please select at least one drive or folder to back up.")
         return
 
     destination_folder = filedialog.askdirectory(title="Select Backup Location")
@@ -96,48 +71,61 @@ def start_backup():
     progress_bar["value"] = 0
     progress_label.config(text="Starting backup...")
 
-    backup_thread = threading.Thread(target=lambda: [backup_drive(drive, destination_folder, progress_bar, progress_label) for drive in selected_drives])
+    backup_thread = threading.Thread(target=lambda: backup_selected_items(selected_items, destination_folder))
     backup_thread.start()
 
+# Backup selected drives or folders
+def backup_selected_items(selected_items, destination_folder):
+    global backup_cancelled
+    backup_cancelled = False  
+
+    for item in selected_items:
+        backup_folder = os.path.join(destination_folder, f"Backup_{os.path.basename(item).strip('/')}")
+
+        try:
+            shutil.copytree(item, backup_folder)
+        except PermissionError:
+            messagebox.showerror("Error", f"Permission Denied: Cannot access {item}")
+            continue
+        except Exception as e:
+            messagebox.showerror("Error", f"Error copying {item}: {e}")
+            continue
+
+        zip_path = backup_folder + ".zip"
+
+        if zip_directory(backup_folder, zip_path, progress_bar, progress_label):
+            shutil.rmtree(backup_folder)
+            messagebox.showinfo("Backup Completed", f"Backup saved as {zip_path}")
+
+# Cancel backup process
 def cancel_backup():
-    """Cancel the ongoing backup process."""
     global backup_cancelled
     backup_cancelled = True
 
-def schedule_backup():
-    """Schedule the backup at a user-defined interval."""
-    interval = schedule_var.get()
-    
-    if interval == "Daily":
-        schedule.every().day.at("02:00").do(start_backup)
-    elif interval == "Weekly":
-        schedule.every().monday.at("02:00").do(start_backup)
-    elif interval == "Monthly":
-        schedule.every(30).days.at("02:00").do(start_backup)
-    else:
-        messagebox.showwarning("Warning", "Please select a valid backup frequency.")
-        return
+# Select a folder for backup
+def add_folder():
+    folder_path = filedialog.askdirectory(title="Select a Folder to Backup")
+    if folder_path:
+        folder_list.append(folder_path)
+        folder_display.insert(tk.END, folder_path)
 
-    messagebox.showinfo("Scheduled", f"Backup scheduled: {interval}")
-    
-    def run_scheduler():
-        while True:
-            schedule.run_pending()
-            time.sleep(60)
-
-    threading.Thread(target=run_scheduler, daemon=True).start()
+# Remove selected folder from the list
+def remove_selected_folder():
+    selected_index = folder_display.curselection()
+    if selected_index:
+        folder_list.pop(selected_index[0])
+        folder_display.delete(selected_index)
 
 # GUI Setup
 root = tk.Tk()
-root.title("Drive Backup Tool")
-root.geometry("400x450")
+root.title("Drive & Folder Backup Tool")
+root.geometry("500x500")
 root.configure(bg="#2c3e50")
 
-tk.Label(root, text="Select Drives to Backup:", font=("Arial", 12, "bold"), fg="white", bg="#2c3e50").pack(pady=10)
+tk.Label(root, text="Select Drives to Backup:", font=("Arial", 12, "bold"), fg="white", bg="#2c3e50").pack(pady=5)
 
 checkboxes = {}
 available_drives = get_available_drives()
-
 frame = tk.Frame(root, bg="#2c3e50")
 frame.pack()
 
@@ -146,20 +134,22 @@ for drive in available_drives:
     checkboxes[drive] = var
     tk.Checkbutton(frame, text=drive, variable=var, font=("Arial", 10), bg="#34495e", fg="white", selectcolor="#2c3e50").pack(anchor="w")
 
+tk.Label(root, text="Select Folders to Backup:", font=("Arial", 12, "bold"), fg="white", bg="#2c3e50").pack(pady=5)
+
+folder_list = []
+folder_display = tk.Listbox(root, height=4, width=50, bg="#ecf0f1", font=("Arial", 10))
+folder_display.pack(pady=5)
+
+tk.Button(root, text="Add Folder", command=add_folder, font=("Arial", 10), bg="#3498db", fg="white").pack(pady=2)
+tk.Button(root, text="Remove Selected", command=remove_selected_folder, font=("Arial", 10), bg="#e74c3c", fg="white").pack(pady=2)
+
 tk.Button(root, text="Start Backup", command=start_backup, font=("Arial", 12, "bold"), bg="#27ae60", fg="white").pack(pady=10)
 tk.Button(root, text="Cancel Backup", command=cancel_backup, font=("Arial", 12, "bold"), bg="#c0392b", fg="white").pack(pady=10)
 
 progress_label = tk.Label(root, text="Progress: 0%", font=("Arial", 10), fg="white", bg="#2c3e50")
 progress_label.pack()
 
-progress_bar = ttk.Progressbar(root, length=300, mode="determinate")
+progress_bar = ttk.Progressbar(root, length=400, mode="determinate")
 progress_bar.pack(pady=10)
-
-schedule_var = tk.StringVar(root)
-schedule_var.set("Select Backup Frequency")
-schedule_menu = tk.OptionMenu(root, schedule_var, "Daily", "Weekly", "Monthly")
-schedule_menu.pack(pady=5)
-
-tk.Button(root, text="Schedule Backup", command=schedule_backup, font=("Arial", 12, "bold"), bg="#2980b9", fg="white").pack(pady=5)
 
 root.mainloop()
