@@ -1,7 +1,10 @@
 import os
 import psutil
+import shutil
+import zipfile
 import tkinter as tk
 from tkinter import messagebox, filedialog
+from datetime import datetime
 
 def get_available_drives():
     """Detect available drives on Windows and Linux."""
@@ -13,6 +16,40 @@ def get_available_drives():
         partitions = psutil.disk_partitions()
         drives = [p.mountpoint for p in partitions]
     return drives
+
+def zip_directory(source_dir, zip_path):
+    """Compress an entire directory into a ZIP file."""
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(source_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, source_dir)
+                    zipf.write(file_path, arcname)
+        return True
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to create ZIP: {e}")
+        return False
+
+def backup_drive(drive, destination_folder):
+    """Clone an entire drive and create a ZIP backup."""
+    backup_folder = os.path.join(destination_folder, f"Backup_{os.path.basename(drive).strip('/')}_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+    
+    # Copy the entire drive to a temporary backup folder
+    try:
+        shutil.copytree(drive, backup_folder)
+    except PermissionError:
+        messagebox.showerror("Error", f"Permission Denied: Cannot access {drive}")
+        return
+    except Exception as e:
+        messagebox.showerror("Error", f"Error copying {drive}: {e}")
+        return
+
+    # Create a ZIP file from the copied drive
+    zip_path = backup_folder + ".zip"
+    if zip_directory(backup_folder, zip_path):
+        shutil.rmtree(backup_folder)  # Remove temporary copied folder after zipping
+        messagebox.showinfo("Backup Completed", f"Backup saved as {zip_path}")
 
 def start_backup():
     """Start the backup process when the user clicks the button."""
@@ -27,16 +64,13 @@ def start_backup():
         messagebox.showwarning("Warning", "Please select a destination folder for backup.")
         return
 
-    # Placeholder for backup logic
-    messagebox.showinfo("Backup Started", f"Backing up {', '.join(selected_drives)} to {destination_folder}...")
-    
-    # Call the backup function (to be implemented in the next step)
-    # backup_drives(selected_drives, destination_folder)
+    for drive in selected_drives:
+        backup_drive(drive, destination_folder)
 
 # GUI Setup
 root = tk.Tk()
 root.title("Drive Backup Tool")
-root.geometry("400x300")
+root.geometry("400x350")
 root.configure(bg="#2c3e50")
 
 tk.Label(root, text="Select Drives to Backup:", font=("Arial", 12, "bold"), fg="white", bg="#2c3e50").pack(pady=10)
